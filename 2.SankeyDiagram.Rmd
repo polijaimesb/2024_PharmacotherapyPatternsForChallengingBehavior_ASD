@@ -1,0 +1,1027 @@
+---
+title: "Medication patterns"
+author: "Paula Jaimes"
+date: "2024-04-22"
+output: html_document
+---
+
+This script contains the step by step of the identification of patterns of medications, specifically the ones that are part of the selective serotonin reuptake inhibitors (SSRIs), atypical antipsychotics, and alpha agonist (centrally acting antiadrenergic agents). We used reimbursement claims data from individuals that have a prescription of those medications. The file used here is already cleaned and pre-processed.
+
+## Functions
+
+### Dummy links - yearly and monthly
+
+In order to maintain the order of the levels in the Sankey diagram, we created dummy connections between each year, with small values near to zero to keep the links. We did two functions, one for the monthly patterns and the other one, for yearly patterns.
+
+```{r}
+#Generate dummy connections by month
+dummy_connections <- function(month, claims_dataset, DrugClass, maxmonth_source = NULL){
+  
+  #This function have as an input: 
+  # - month = which is each of the month to search for patterns. This month has to be 
+  #   in the following format: 202011. 
+  # - claims_dataset = the dataframe that contains the prescription names 
+  # - DrugClass = the name of the drug classes to create the dummy links with the medications
+  #   within it. 
+  # - maxmonth_source = Max month of the time period. 
+
+  if(is.null(maxmonth_source)){
+    maxmonth_source<-as.numeric(paste(substr(month,1,4),"12",sep=""))
+  }
+  
+  if(month < maxmonth_source){  
+    if(substr(month,5,6)=="12"){
+      
+      next_month<-as.numeric(substr(month,1,4))+1
+      
+      dummy_names<-claims_dataset %>% 
+      filter(.$Drug_class %in% DrugClass) %>%
+      select(medication) %>%
+      unique %>%
+      mutate(drugSource = paste(medication, month, sep="_")) %>% 
+      mutate(drugTarget = paste(medication,
+      as.numeric(paste(next_month,"01",sep="")),sep="_")) 
+      
+    }else{
+      dummy_names<-claims_dataset %>% 
+      filter(.$Drug_class %in% DrugClass) %>%
+      select(medication) %>%
+      unique %>%
+      mutate(drugSource = paste(medication, month, sep="_")) %>% 
+      mutate(drugTarget = paste(medication, month+1,sep="_")) 
+    }
+    
+    return(dummy_names)
+  }
+  
+
+}
+```
+
+The same procedure is create for the dummy links yearly.
+
+```{r}
+#Generate dummy connections by year
+dummy_connections_year <- function(year, maxyear_source, DrugClass, claims_dataset_prescription){ 
+  
+  #This function have as an input: 
+  # - year = year to search for patterns.  
+  # - claims_dataset = the dataframe that contains the prescription names 
+  # - DrugClass = the name of the drug classes to create the dummy links with the medications
+  #   within it. 
+  # - maxyear_source = Max year of the time period. 
+  
+    if(year < maxyear_source){  
+      dummy_names <- claims_dataset_prescription %>% 
+        filter(.$Drug_class %in% DrugClass) %>%
+        select(medication) %>%
+        unique %>%
+        mutate(drugSource = paste(medication, year, sep="_")) %>%
+        mutate(drugTarget = paste(medication, year+1,sep="_"))
+      
+      return(dummy_names)
+    }
+      
+}
+
+```
+
+### Formatting prescriptions for sankey diagram
+
+In order to create the sankey diagram, we have to format the prescription for each year accordingly. First, it is necessary to only include the individuals with one medication per year, no matter if they are receiving multiple refills. Then, we have to create one column for the source medication and the target medication by year, and then, count how many patients have the same pattern of prescription.
+
+```{r}
+SankeyDiagram_patientsOneDrugMed<-function(year, claims_dataset, flag_count = FALSE){
+  
+  #Declare initial vectors
+  patients_source<- c()
+  medication_source_c<- c()
+  medication_target_c<-c()
+  medication_source_count<-c()
+  
+  #Declare the start and final date of the source and the target 
+  minyears_source<-as.numeric(paste(year,"01",sep=""))
+  maxyears_source<-as.numeric(paste(year,"12",sep=""))
+
+  minyears_target<-as.numeric(paste(year+1,"01",sep=""))
+  maxyears_target<-as.numeric(paste(year+1,"12",sep=""))
+  
+  #Extract only the patients that appears with a claim in the source
+  #To reduce time consumption
+  
+  patients_id <- claims_dataset %>%
+    filter(.$month_id >= minyears_source & 
+             .$month_id <= maxyears_source) %>% 
+    select(pat_id) %>% 
+    unique %>%
+    unlist
+
+  for(i in patients_id){
+    #Go to each patient and see what of those only have one prescription 
+    #or multiple prescription for the same drug medication 
+    
+    #In the source
+    medication_source <- claims_dataset %>% 
+    filter(.$month_id >= minyears_source & .$month_id <= maxyears_source & 
+             .$pat_id == i) %>% 
+    select(medication) %>% unique
+    
+    #And in the target 
+    medication_target <- claims_dataset %>% 
+    filter(.$month_id >= minyears_target & .$month_id <= maxyears_target & 
+             .$pat_id == i) %>% 
+    select(medication) %>% unique
+  
+    #Verifiy that the prescriptions only are from the same medication
+    #And extract the medication
+    if(nrow(medication_source) == 1 & nrow(medication_target) == 1 & is.null(medication_source) != TRUE & is.null(medication_target) != TRUE){
+      patients_source<-c(patients_source,i)
+      
+    medication_source_c <-c(medication_source_c,medication_source)
+    medication_target_c <-c(medication_target_c,medication_target)
+    medication_source_count <- c(medication_source_count,medication_source)
+    
+    }else{
+      if(nrow(medication_source) == 1){
+        medication_source_count <- c(medication_source_count,medication_source)
+      }
+    }
+    
+    
+  }
+  
+  #Put all the results in a dataframe, formatted it according with the needs 
+  # and count it 
+  
+  if(is.null(medication_source_c) != TRUE 
+     & is.null(medication_target_c) != TRUE & 
+     flag_count == FALSE){
+    drugs_patterns <- data.frame(drugSource = unlist(medication_source_c),
+                             drugTarget = unlist(medication_target_c)) %>%
+    mutate(drugTarget = paste(drugTarget,year+1,sep="_")) %>%
+    mutate(drugSource = paste(drugSource,year,sep="_")) %>%
+    group_by(drugSource, drugTarget) %>%
+    count
+
+   return(drugs_patterns)
+      
+  }else{
+    drugs_patterns<- data.frame(drugSource = unlist(medication_source_count)) %>% 
+      mutate(drugSource = paste(drugSource,year,sep="_"))
+    
+    return(drugs_patterns)
+  }
+
+}
+
+```
+
+## Sankey diagram construction
+
+For the study, we selected three drug classes as mentioned before. We define here the study period, the drug classes, and define the cohort according with those. Despite our study period is from 2012 to 2021, it is a requirenment of the function for the sankey diagram formatting to not include the final year.
+
+```{r}
+#Study period 
+years = 2012:2020
+
+#With only the drug classes 
+drug_classes <- c("Atypical antipsychotics","Selective serotonin reuptake inhibitors",
+                     "Antiadrenergic agents centrally acting")
+
+claims_ASD_wNDC_csv_onlyPrescripClass_RL<-claims_ASD_wNDC_csv_onlyPrescripClass %>%
+  filter(.$Drug_class %in% drug_classes) %>% 
+  mutate(year = substr(month_id,1,4))
+
+drug_classes <- claims_ASD_wNDC_csv_onlyPrescripClass_RL %>% 
+  select(medication, Drug_class) %>% 
+  unique 
+
+```
+
+Then, we use the function described in the last section, using all the years already defined.
+
+```{r}
+start.time <- Sys.time()
+
+all_patterns_df<-lapply(years, SankeyDiagram_patientsOneDrugMed, claims_dataset = claims_ASD_wNDC_csv_onlyPrescripClass_RL) 
+
+all_patterns_df <- bind_rows(all_patterns_df)
+```
+
+After that, we create the dummy links, now using the entired study period. Then, we join it to all the patterns found.
+
+```{r}
+#Create the dummy links
+years <- 2012:2021
+
+dummy_links_year<-lapply(years,
+                         dummy_connections_year, 
+                         maxyear_source = max(years), 
+                         claims_dataset_prescription =
+                           claims_ASD_wNDC_csv_onlyPrescripClass_RL,
+                         DrugClass = unlist(unique(drug_classes$Drug_class)))
+
+dummy_links_year<-bind_rows(dummy_links_year)
+
+#Join the dataset with the dummy links 
+all_patterns_df<-full_join(all_patterns_df,
+                           dummy_links_year,
+                           by = c("drugSource","drugTarget")) %>%
+  select(-medication) 
+
+all_patterns_df$n<-replace(all_patterns_df$n,is.na(all_patterns_df$n),1e-6)
+```
+
+Here, we define the colors for the nodes and the links,
+
+```{r}
+nodes_colors <- data.frame(Drug_class = sort(c("Selective serotonin reuptake inhibitors","Antiadrenergic agents centrally acting","Atypical antipsychotics")))
+
+color_nodes <- c("#489b7b","#cb6527", "#DDAB3B")
+
+#The next functions is to add transparency (opacity) to the colors 
+add.alpha <- function(col, alpha = 1){
+  if(missing(col)){
+    stop("Provide a vector of colours.")
+  }else{
+    apply(sapply(col, col2rgb)/255, 2,
+          function(x)
+            rgb(x[1], x[2], x[3], alpha = alpha))
+  }
+}
+
+color_nodes_alpha <- add.alpha(color_nodes, alpha = 0.4)
+nodes_colors <- cbind(nodes_colors, color = color_nodes, color_link = color_nodes_alpha)
+```
+
+After the identification of the patterns of medications, we have to format the tables for the nodes and for the links. This is just to give to each medication by year a index or ID to be identified by the sankey diagram function.
+
+```{r}
+#Create the nodes
+  nodes <- all_patterns_df %>%
+    pivot_longer(1:2, values_to = "name_node") %>%
+    distinct(name_node) %>% arrange(name_node) %>% 
+    mutate(year = as.numeric(sub(".*_(\\d+)$", "\\1", name_node))) %>% 
+    arrange(year) %>%
+    mutate(name_node2 = substr(name_node, 1, nchar(name_node)-5)) %>% 
+    mutate(medication = name_node2) %>% 
+    mutate(name_node2 = gsub("(?<=\\b)([a-z])", 
+                             "\\U\\1", 
+                             tolower(name_node2), perl = TRUE)) %>% 
+    left_join(.,drug_classes, by = "medication") %>% 
+    arrange(year, Drug_class) %>% 
+    mutate(idx = (1:n()) - 1)
+
+  nodes <- left_join(nodes,nodes_colors, by = "Drug_class")
+  
+  #Select only the color for the source 
+  source_colors <- nodes %>% 
+    select(idx, color_link) %>% 
+    mutate(source = idx) %>% 
+    select(-idx)
+```
+
+Then, with the indices of each node, we create the links. Two columns are creating as similar to the first table formated, containing the drug source, the drug target, and the year of the source.
+
+```{r}
+links<- bind_rows(
+    all_patterns_df %>% select(source = drugSource, target = drugTarget, value = n)) %>%
+    mutate(year = as.numeric(sub(".*_(\\d+)$", "\\1", source))) %>% 
+    arrange(year) %>% 
+    dplyr::group_by(source, target) %>%
+    mutate(source = nodes$idx[match(source, nodes$name_node)]) %>%
+    mutate(target = nodes$idx[match(target, nodes$name_node)]) %>% 
+    left_join(., source_colors, by = "source") %>% 
+    mutate(color = ifelse(value == 1e-6,"#00000000",color_link)) %>% 
+    ungroup()
+```
+
+In order to put transparent the dummy nodes, we have to identify the nodes with less than 1 patient and create an specific group for coloring.
+
+```{r}
+#Obtain the nodes that have a total less than 1 (dummy link)
+nodes_smallCount_source <- links %>% 
+    group_by(source) %>% 
+    summarise(total = sum(value)) %>% 
+    filter(.$total < 1) %>%
+    ungroup() %>% 
+    select(source) %>% 
+    unique
+  
+    nodes_smallCount_target <- links %>% 
+    group_by(target) %>% 
+    summarise(total = sum(value)) %>% 
+    filter(.$total < 1) %>%
+    ungroup() %>%
+    select(target) %>% 
+    unique
+    
+   nodes_smallCount <- nodes_smallCount_source %>% 
+      filter(.$source %in% nodes_smallCount_target$target | 
+               .$source %in% c(3))
+  
+nodeColors <- unlist(nodes_colors$color)
+
+#Create the group of the nodes for coloring 
+nodes <- nodes %>%
+mutate(color = ifelse(idx %in% 
+                        nodes_smallCount$source, 
+                      "#00000000", color)) %>%
+mutate(Drug_class = ifelse(color == "#00000000", paste0(Drug_class,"_D"), Drug_class), 
+       name_node2 = ifelse(color == "#00000000", '', name_node2))
+
+
+drug_class <- nodes_colors$Drug_class
+# linkColors <- sort(unique(links$color))
+
+nodes_drugClasses <- nodes %>% 
+  select(idx, Drug_class) %>% 
+  unique 
+
+#This is to just leave the name of the nodes at the end
+nodes <- nodes %>% 
+  mutate(name_node_final = ifelse(year < max(year) , '', name_node2))
+
+colnames(nodes_drugClasses)[1] = "source"
+```
+
+Similar process is created with the links.
+
+```{r}
+links <- left_join(links, nodes_drugClasses, by = "source") %>% 
+    arrange(year, Drug_class) %>% 
+    mutate(Drug_class = ifelse(value == 1e-6 & 
+                                 substr(Drug_class, nchar(Drug_class)-1, 
+                                        nchar(Drug_class)) != "_D", paste0(Drug_class,"_D"), Drug_class))
+  
+colnames(links)[7] <- "Drug_class"
+```
+
+Finally, we create the color scale for the sankey diagram using the color groups and colors defined before.
+
+```{r}
+my_color <- paste("d3.scaleOrdinal().domain([",
+                  paste0("'",paste(drug_class, 
+                                   collapse = "','"),"'"),",",paste0("'",paste(paste0(drug_class,"_D"), 
+                                                                               collapse = "','"),"'"),
+                  "]).range([",
+                  paste0("'",paste(nodeColors,collapse="','"),"'"),",'#00000000', '#00000000', '#00000000'])")
+```
+
+The sankey diagram is created with `sankeyNetwork` command from the `networkd3` library. We save it as html.
+
+```{r}
+fig_overtime_drugClasses <- sankeyNetwork(Links=links, Nodes=nodes, Source='source',
+                                            Target='target', 
+                                            Value = 'value', 
+                                            NodeID ='name_node_final',
+                                            colourScale=my_color,
+                                            fontSize= 35, nodeWidth = 25,
+                                            nodePadding = 15,
+                                            sinksRight = FALSE,
+                                            LinkGroup =  "Drug_class",
+                                            NodeGroup = "Drug_class", 
+                                            iterations = 0, width = 2000, height = 900)
+
+fig_overtime_drugClasses
+end.time <- Sys.time()
+
+htmlwidgets::saveWidget(fig_overtime_drugClasses,"S:/Paula/Figures/ResearchLetter/NewFilters/HTML_SD/Final_SD/FinalRL_April_NoNames/SD_NoName_2012to2021_ourMethod_drugclasses_2to26_12moEnroll.html")
+```
+
+Time consume doing the Sankey Diagram per year:
+
+```{r}
+end.time - start.time
+```
+
+## Aripiprazole and Risperidone per month - approach 
+
+In order to observe how much a patient can change after receiving for the first time the only two medication approved by the FDA, we are going to follow up patients that had a prescription month by month and see if they change or stayed with the same medication. To do this, we selected the year with the highest count of claims and patients, which is 2019. 
+
+```{r}
+year_select <- 2019
+# year_select <- 2020
+# year_select <- 2021
+# year_select <- 2019:2021
+
+claims_dataset <- claims_ASD_wNDC_csv_onlyPrescripClass_RL %>% 
+   filter(.$year == year_select) #If is just one year
+  #filter(.$year %in% year_select) #If is several years at once 
+
+```
+
+Here, we create the dummy links with the same functions described before. 
+
+```{r}
+months <- 201901:201912
+# months <- 202001:202012
+# months <- 202101:202112
+
+# months_1 <- 201901:201912
+# months_2 <- 202001:202012
+# months_3 <- 202101:202112
+
+# months <- c(months_1,months_2,months_3)
+
+#All years 
+dummy_links_month_RL<-lapply(months, 
+                             dummy_connections, 
+                             claims_dataset = claims_dataset, 
+                             DrugClass = unlist(unique(drug_classes$Drug_class)),
+                             maxmonth_source = max(months))
+dummy_links_month_RL<-bind_rows(dummy_links_month_RL)
+head(dummy_links_month_RL,5)
+```
+
+For the sankey diagram formatting, we used similar methodology, but just including patients with a aripiprazole or risperidone prescription. Please, have in mind that a patient that started with a prescription of Aripiprazole on, for example, February, can be included or not in the next months if he/she accomplish the inclusion criteria.
+
+```{r}
+#Run this line if you want to reset the patients ID list 
+patients_id_allMonths<-c()
+```
+
+If you do this for all the final three years, you have to run the line starting from 533. If you are running this code with just one year, you have to run the lines starting to 572  to create the dataframe of the patterns. 
+
+```{r}
+start.time <- Sys.time()
+
+# months_1 <- 201901:201912
+# months_2 <- 202001:202012
+# months_3 <- 202101:202112
+
+# months <- c(months_1,months_2,months_3)
+
+patients_source<- c()
+df_monthly <- list()
+cont <- 1
+
+for(j in 1:length(months)){
+  #Declare initial vectors
+  if(months[j] < max(months)){
+   
+    medication_source_c<- c()
+    medication_target_c<-c()
+    
+    #Extract only the patients that appears with a claim in the source
+    #To reduce time consumption
+      patients_id <- claims_dataset %>% 
+        filter(.$month_id == months[j]) %>% 
+        select(pat_id, medication) %>% 
+        unique %>% 
+        filter(.$medication == "ARIPIPRAZOLE" | .$medication == "RISPERIDONE") %>% 
+        group_by(pat_id) %>% 
+        count %>% 
+        ungroup() %>% 
+        filter(.$n == 1) %>% 
+        select(pat_id) %>% 
+        unlist
+   
+    patients_id_allMonths <- unique(c(patients_id_allMonths,patients_id))
+    
+    
+      for(i in patients_id_allMonths){
+        #Go to each patient and see what of those only have one prescription 
+        #or multiple prescription for the same drug medication 
+        
+        #In the source
+        medication_source <- claims_dataset %>% 
+          filter(.$month_id == months[j] & 
+                   .$pat_id == i) %>% 
+          select(medication) %>% unique
+        
+        
+        #And in the target 
+        medication_target <- claims_dataset %>% 
+          filter(.$month_id == months[j+1] &  
+                   .$pat_id == i) %>% 
+          select(medication) %>% unique
+        
+        
+        #Verifiy that the prescriptions only are from the same medication
+        #And extract the medication
+        if(nrow(medication_source) == 1 & nrow(medication_target) == 1){
+          patients_source<-c(patients_source,i)
+          medication_source_c <-c(medication_source_c,medication_source)
+          medication_target_c <-c(medication_target_c,medication_target)
+        
+        }
+      }
+      
+    
+    # and count it 
+    drugs_patterns <- data.frame(drugSource = unlist(medication_source_c),
+                                 drugTarget = unlist(medication_target_c)) %>%
+      mutate(drugTarget = paste(drugTarget,months[j+1],sep="_")) %>%
+      mutate(drugSource = paste(drugSource,months[j], sep="_")) %>%
+      group_by(drugSource, drugTarget) %>%
+      count %>% 
+      mutate(medication = substr(drugSource, 1, nchar(drugSource)-7))
+  
+    
+    assign(paste0("df_drugsYear",cont),drugs_patterns)
+    cont = cont + 1
+     
+  }
+ 
+}
+
+#For all the months at once 
+# all_patterns_monthly_rispAndArip_df <- rbind(df_drugsYear1,
+# df_drugsYear2,
+# df_drugsYear3,
+# df_drugsYear4,
+# df_drugsYear5,
+# df_drugsYear6,
+# df_drugsYear7,
+# df_drugsYear8,
+# df_drugsYear9,
+# df_drugsYear10,
+# df_drugsYear11,
+# df_drugsYear12,
+# df_drugsYear13,
+# df_drugsYear14,
+# df_drugsYear15,
+# df_drugsYear16,
+# df_drugsYear17,
+# df_drugsYear18,
+# df_drugsYear19,
+# df_drugsYear20,
+# df_drugsYear21,
+# df_drugsYear22,
+# df_drugsYear23,
+# df_drugsYear24,
+# df_drugsYear25,
+# df_drugsYear26,
+# df_drugsYear27,
+# df_drugsYear28,
+# df_drugsYear29,
+# df_drugsYear30,
+# df_drugsYear31,
+# df_drugsYear32,
+# df_drugsYear33,
+# df_drugsYear34,
+# df_drugsYear35
+# )
+
+#For just one year 
+all_patterns_monthly_rispAndArip_df <- rbind(df_drugsYear1,
+                                             df_drugsYear2,
+                                             df_drugsYear3,
+                                             df_drugsYear4,
+                                             df_drugsYear5,
+                                             df_drugsYear6,
+                                             df_drugsYear7,
+                                             df_drugsYear8,
+                                             df_drugsYear9,
+                                             df_drugsYear10,
+                                             df_drugsYear11
+                                             )
+end.time <- Sys.time()
+```
+
+Print the time taken to create the sankey diagram table. 
+
+```{r}
+end.time - start.time 
+```
+
+Create the dummy links. 
+
+```{r}
+all_patterns_monthly_rispAndArip_df<-full_join(all_patterns_monthly_rispAndArip_df,
+                             select(dummy_links_month_RL, drugSource,drugTarget),
+                             by = c("drugSource","drugTarget"))
+
+all_patterns_monthly_rispAndArip_df$n<-replace(all_patterns_monthly_rispAndArip_df$n,is.na(all_patterns_monthly_rispAndArip_df$n),1e-6)
+```
+
+And finally, format the table to create nodes and links, and coloring. 
+
+```{r}
+nodes_colors <- data.frame(Drug_class = sort(c("Selective serotonin reuptake inhibitors","Antiadrenergic agents centrally acting","Atypical antipsychotics")))
+
+color_nodes <- c("#489b7b","#cb6527", "#DDAB3B")
+
+#The next functions is to add transparency (opacity) to the colors 
+add.alpha <- function(col, alpha = 1){
+  if(missing(col)){
+    stop("Provide a vector of colours.")
+  }else{
+    apply(sapply(col, col2rgb)/255, 2,
+          function(x)
+            rgb(x[1], x[2], x[3], alpha = alpha))
+  }
+}
+
+color_nodes_alpha <- add.alpha(color_nodes, alpha = 0.4)
+nodes_colors <- cbind(nodes_colors, color = color_nodes, color_link = color_nodes_alpha)
+  
+
+#colnames(drug_classes)[2] = "medication"
+
+  #Create the nodes
+  nodes <- all_patterns_monthly_rispAndArip_df %>%
+    pivot_longer(1:2, values_to = "name_node") %>%
+    distinct(name_node) %>% arrange(name_node) %>% 
+    mutate(month = as.numeric(sub(".*_(\\d+)$", "\\1", name_node))) %>% arrange(month) %>%
+    mutate(name_node2 = substr(name_node, 1, nchar(name_node)-7)) %>% 
+    mutate(medication = name_node2) %>% 
+    mutate(name_node2 = gsub("(?<=\\b)([a-z])", "\\U\\1", tolower(name_node2), perl = TRUE)) %>% 
+    left_join(.,drug_classes, by = "medication") %>% 
+    arrange(month, Drug_class) %>% 
+    mutate(idx = (1:n()) - 1)
+
+  nodes <- left_join(nodes,nodes_colors, by = "Drug_class")
+  
+
+
+  #Select only the color for the source 
+  source_colors <- nodes %>% 
+    select(idx, color_link) %>% 
+    mutate(source = idx) %>% 
+    select(-idx)
+  
+  
+  links<- bind_rows(
+    all_patterns_monthly_rispAndArip_df %>% select(source = drugSource, target = drugTarget, value = n)) %>%
+    mutate(month = as.numeric(sub(".*_(\\d+)$", "\\1", source))) %>% 
+    arrange(month) %>% 
+    dplyr::group_by(source, target) %>%
+    mutate(source = nodes$idx[match(source, nodes$name_node)]) %>%
+    mutate(target = nodes$idx[match(target, nodes$name_node)]) %>% 
+    left_join(., source_colors, by = "source") %>% 
+    mutate(color = ifelse(value == 1e-6,"#00000000",color_link)) %>% 
+    ungroup()
+
+  nodes_smallCount_source <- links %>% 
+    group_by(source) %>% 
+    summarise(total = sum(value)) %>% 
+    filter(.$total < 1) %>%
+    ungroup() %>% 
+    select(source) %>% 
+    unique
+  
+    nodes_smallCount_target <- links %>% 
+    group_by(target) %>% 
+    summarise(total = sum(value)) %>% 
+    filter(.$total < 1) %>%
+    ungroup() %>%
+    select(target) %>% 
+    unique
+    
+    nodes_smallCount <- nodes_smallCount_source %>% 
+      filter(.$source %in% nodes_smallCount_target$target | 
+               .$source %in% c(0,1,3,4,5,6,8,9,10,11,12,13,14))
+  
+  nodeColors <- unlist(nodes_colors$color)
+
+  nodes <- nodes %>%
+  mutate(color = ifelse(idx %in% 
+                          nodes_smallCount$source, 
+                        "#00000000", color)) %>%
+  mutate(Drug_class = ifelse(color == "#00000000", paste0(Drug_class,"_D"), Drug_class), 
+         name_node2 = ifelse(color == "#00000000", '', name_node2))
+  
+  #Put transparent the names, and leave just the final ones 
+  nodes <- nodes %>% 
+    mutate(name_node_final = ifelse(month < max(months) , '', name_node2))
+
+  
+  drug_class <- nodes_colors$Drug_class
+  # linkColors <- sort(unique(links$color))
+  
+  nodes_drugClasses <- nodes %>% 
+    select(idx, Drug_class) %>% 
+    unique 
+  
+  
+  colnames(nodes_drugClasses)[1] = "source"
+  
+  links <- left_join(links, nodes_drugClasses, by = "source") %>% 
+    arrange(month, Drug_class) %>% 
+    mutate(Drug_class = ifelse(value == 1e-6 & 
+                                 substr(Drug_class, nchar(Drug_class)-1, nchar(Drug_class)) != "_D", paste0(Drug_class,"_D"), Drug_class))
+  
+  colnames(links)[7] <- "Drug_class"
+
+  my_color <- paste("d3.scaleOrdinal().domain([",
+                  paste0("'",paste(drug_class, 
+                                   collapse = "','"),"'"),",",paste0("'",paste(paste0(drug_class,"_D"), 
+                                                                               collapse = "','"),"'"),
+                  "]).range([",
+                  paste0("'",paste(nodeColors,collapse="','"),"'"),",'#00000000', '#00000000', '#00000000'])")
+
+  
+  fig_overtime_drugClasses_month <- sankeyNetwork(Links=links, Nodes=nodes, Source='source',
+                                            Target='target', 
+                                            Value = 'value', 
+                                            NodeID ='name_node_final',
+                                            colourScale=my_color,
+                                            fontSize= 35, nodeWidth = 20,
+                                            nodePadding = 15,
+                                            sinksRight = FALSE,
+                                            LinkGroup =  "Drug_class",
+                                            NodeGroup = "Drug_class", 
+                                            iterations = 0, width = 2000, height = 900)
+
+  fig_overtime_drugClasses_month
+  
+  
+htmlwidgets::saveWidget(fig_overtime_drugClasses_month,"S:/Paula/Figures/ResearchLetter/NewFilters/HTML_SD/Final_SD/FinalRL_April_NoNames/SD_NoName_2019_ourMethod_drugclasses_2to26_12moEnroll.html")  
+  
+```
+
+## Calculate proportion of patients per drug class 
+### Yearly - per drug class 
+
+
+
+```{r}
+Prop_allPatterns_yearly <- all_patterns_df %>% 
+  ungroup() %>% 
+  filter(.$n >= 1) %>%
+  mutate(year_source = substr(.$drugSource, 
+                        nchar(.$drugSource)-3,
+                        nchar(.$drugSource)), 
+         year_target = substr(.$drugTarget, 
+                               nchar(.$drugTarget)-3,
+                               nchar(.$drugTarget)),
+         drugSource = substr(.$drugSource, 
+                             1,
+                             nchar(.$drugSource)-5),
+         drugTarget = substr(.$drugTarget, 
+                             1,
+                             nchar(.$drugTarget)-5)) 
+
+#Count how many patients are in each month 
+TotalYearly <- Prop_allPatterns_yearly %>% 
+group_by(year_source) %>%
+summarise(total = sum(n))
+
+PropMonthByYearh <- function(year_select,patterns_df, total_year){
+  #For each year divide the number of patients for each of the links by the total of patients in that year
+  YearByYear_prop <- patterns_df %>% 
+    filter(.$year_source == year_select) %>% 
+    mutate(prop_year = (n/unlist(total_year[total_year$year_source == year_select,'total']))*100) %>% 
+    mutate(prop_year = as.numeric(format(prop_year, scientific = F)))
+  
+  return(YearByYear_prop)
+}
+
+
+PropAllYears <- bind_rows(lapply(years,PropMonthByYearh, patterns_df = Prop_allPatterns_yearly, total_year = TotalYearly))
+```
+
+```{r}
+
+#To have into account 2021, we count the number of patients that were prescribed the medications the next year. For 2012 and 2013, we have to do it counting with the source year (because 2012 is source only)
+
+ SumAllMeds_part1<- PropAllYears %>% 
+  filter(.$year_target > 2013) %>% 
+  select(-prop_year) %>% 
+  mutate(medication = drugTarget, 
+         year = year_target) %>% 
+  left_join(., drug_classes, by = "medication") %>% 
+  group_by(Drug_class, year) %>%
+  summarise(total_cases = sum(n)) %>%
+  ungroup() 
+ 
+ SumAllMeds_part2<- PropAllYears %>% 
+  filter(.$year_source <= 2013) %>% 
+  select(-prop_year) %>% 
+  mutate(medication = drugSource, 
+         year = year_source) %>% 
+  left_join(., drug_classes, by = "medication") %>% 
+  group_by(Drug_class, year) %>%
+  summarise(total_cases = sum(n)) %>%
+  ungroup()
+
+ TotalYearly_1 <- Prop_allPatterns_yearly %>% 
+  filter(.$year_target > 2013) %>%
+  group_by(year_target) %>%
+  summarise(total = sum(n)) %>% 
+  ungroup()
+ 
+ 
+ TotalYearly_2 <- Prop_allPatterns_yearly %>% 
+  filter(.$year_source <= 2013) %>%
+  group_by(year_source) %>%
+  summarise(total = sum(n)) %>% 
+  ungroup()
+ 
+ colnames(TotalYearly_1)[1] = "year"
+ colnames(TotalYearly_2)[1] = "year"
+   
+ TotalYearly_all <- rbind(TotalYearly_1,TotalYearly_2) %>% 
+   arrange(year)
+   
+   
+  SumAllMeds_all <- rbind(SumAllMeds_part1,SumAllMeds_part2) %>% 
+    arrange(Drug_class, year) %>% 
+    left_join(., TotalYearly_all, by = "year") 
+
+
+```
+
+
+Proportions of medications (all): 
+
+```{r}
+
+print("SSRIs: ")
+SumAllMeds_all %>% filter(.$Drug_class == "Selective serotonin reuptake inhibitors") %>% mutate(total_year = sum(total), total_ssris = sum(total_cases)) %>% select(total_ssris, total_year) %>% unique %>% mutate(average_ssris = total_ssris/total_year) 
+  
+
+print("Alpha agonists: ")
+SumAllMeds_all %>% filter(.$Drug_class == "Antiadrenergic agents centrally acting") %>% mutate(total_year = sum(total), total_ssris = sum(total_cases)) %>% select(total_ssris, total_year) %>% unique %>% mutate(average_ssris = total_ssris/total_year)
+
+print("Atypical antipsychotics: ")
+SumAllMeds_all %>% filter(.$Drug_class == "Atypical antipsychotics") %>% mutate(total_year = sum(total), total_ssris = sum(total_cases)) %>% select(total_ssris, total_year) %>% unique %>% mutate(average_ssris = total_ssris/total_year)
+
+```
+
+### Monthly  - aripiprazole and risperidone in 2019
+
+```{r}
+Prop_allPatterns <- all_patterns_monthly_rispAndArip_df %>% 
+  ungroup() %>% 
+  filter(.$n >= 1) %>%
+  mutate(month_source = substr(.$drugSource, 
+                        nchar(.$drugSource)-5,
+                        nchar(.$drugSource)), 
+         month_target = substr(.$drugTarget, 
+                               nchar(.$drugTarget)-5,
+                               nchar(.$drugTarget)),
+         drugSource = substr(.$drugSource, 
+                             1,
+                             nchar(.$drugSource)-7),
+         drugTarget = substr(.$drugTarget, 
+                             1,
+                             nchar(.$drugTarget)-7)) 
+
+#Count how many patients are in each month 
+TotalMonth <- Prop_allPatterns %>% 
+group_by(month_source) %>%
+summarise(total = sum(n))
+
+PropMonthByMonth <- function(month,patterns_df, total_month){
+  #For each month, divide the number of patients for each of the links by the total of patients in that month 
+  MonthByMonth_prop <- patterns_df %>% 
+    filter(.$month_source == month) %>% 
+    mutate(prop_month = (n/unlist(total_month[total_month$month_source == month,'total']))*100) %>% 
+    mutate(prop_month = as.numeric(format(prop_month, scientific = F)))
+  
+  return(MonthByMonth_prop)
+}
+
+PropAllMonths <- bind_rows(lapply(months[1:length(months)-1],PropMonthByMonth, patterns_df = Prop_allPatterns, total_month = TotalMonth))
+
+PropAllMonths <- PropAllMonths %>% 
+  arrange(month_source, prop_month)
+
+
+```
+
+Show the proportion of individuals that started with aripiprazole and continue with it per year. 
+
+```{r}
+print(PropAllMonths %>% 
+        filter(.$drugSource == .$drugTarget 
+               & .$drugSource == "ARIPIPRAZOLE"))
+```
+And, risperidone. 
+
+```{r}
+print(PropAllMonths %>% 
+        filter(.$drugSource == .$drugTarget 
+               & .$drugSource == "RISPERIDONE"))
+```
+
+#### To observe how much certain medication prescription changed 
+
+```{r}
+print("Initial count of prescription for aripiprazole ")
+intial_count_arip <- (all_patterns_df %>% 
+  ungroup() %>% 
+  mutate(drugSource_2 = substr(drugSource, 1,nchar(drugSource)-5), 
+         year = substr(drugSource, nchar(drugSource)-3,
+                       nchar(drugSource))) %>% 
+  filter(.$year == 2012 & 
+           .$drugSource_2 == "ARIPIPRAZOLE") %>%
+  select(n) %>% 
+  unlist %>% 
+  sum)
+print(intial_count_arip)
+```
+```{r}
+print("Final count of prescription for ARIPIPRAZOLE ")
+final_count_arip <- (all_patterns_df %>% 
+  ungroup() %>%
+  mutate(drugTarget_2 = substr(drugTarget, 1,nchar(drugTarget)-5), 
+         year = substr(drugTarget, nchar(drugTarget)-3, 
+                       nchar(drugTarget))) %>% 
+  filter(.$year == 2021 & 
+           .$drugTarget_2 == "ARIPIPRAZOLE") %>%
+  select(n) %>% 
+  unlist %>% 
+  sum)
+
+print(final_count_arip)
+```
+
+Change between the initial amount of patients receiving a prescription of aripiprazole vs the final
+
+```{r}
+(final_count_arip - intial_count_arip)/final_count_arip * 100
+```
+And risperidone. 
+
+```{r}
+print("Initial count of prescription for RISPERIDONE ")
+intial_count_risp <- (all_patterns_df %>% 
+  ungroup() %>% 
+  mutate(drugSource_2 = substr(drugSource, 1,nchar(drugSource)-5), 
+         year = substr(drugSource, nchar(drugSource)-3,
+                       nchar(drugSource))) %>% 
+  filter(.$year == 2012 & 
+           .$drugSource_2 == "RISPERIDONE") %>%
+  select(n) %>% 
+  unlist %>% 
+  sum)
+print(intial_count_risp)
+```
+
+```{r}
+print("Final count of prescription for RISPERIDONE ")
+final_count_risp <- (all_patterns_df %>% 
+  ungroup() %>%
+  mutate(drugTarget_2 = substr(drugTarget, 1,nchar(drugTarget)-5), 
+         year = substr(drugTarget, nchar(drugTarget)-3, 
+                       nchar(drugTarget))) %>% 
+  filter(.$year == 2021 & 
+           .$drugTarget_2 == "RISPERIDONE") %>%
+  select(n) %>% 
+  unlist %>% 
+  sum)
+
+print(final_count_risp)
+```
+And finally, the change rate of Risperidone. 
+
+```{r}
+(final_count_risp - intial_count_risp)/final_count_risp * 100
+```
+And the same, but monthly. 
+
+```{r}
+total_number_drugSource <- all_patterns_monthly_rispAndArip_df %>%
+  ungroup() %>%
+  filter(.$n >= 1) %>%
+  group_by(drugSource) %>% 
+  summarize(total_drugSource_count = sum(n)) %>%
+  ungroup() %>% 
+  mutate(month_source = substr(.$drugSource, 
+                      nchar(.$drugSource)-5,
+                      nchar(.$drugSource)), 
+       drugSource = substr(.$drugSource, 
+                           1,
+                           nchar(.$drugSource)-7))
+```
+
+How aripiprazole changed overtime. 
+
+```{r}
+initial_value_arip_monthly <- total_number_drugSource %>% 
+  filter(.$drugSource == "ARIPIPRAZOLE" & 
+           .$month_source == 201901) %>% 
+  select(total_drugSource_count) %>% 
+  unlist 
+
+final_value_arip_monthly <- total_number_drugSource %>% 
+  filter(.$drugSource == "ARIPIPRAZOLE" & 
+           .$month_source == 201911) %>% 
+  select(total_drugSource_count) %>% 
+  unlist 
+
+(final_value_arip_monthly - initial_value_arip_monthly)/final_value_arip_monthly * 100
+
+```
+And with risperidone. 
+
+```{r}
+initial_value_risp_monthly <- total_number_drugSource %>% 
+  filter(.$drugSource == "RISPERIDONE" & 
+           .$month_source == 201901) %>% 
+  select(total_drugSource_count) %>% 
+  unlist 
+
+final_value_risp_monthly <- total_number_drugSource %>% 
+  filter(.$drugSource == "RISPERIDONE" & 
+           .$month_source == 201911) %>% 
+  select(total_drugSource_count) %>% 
+  unlist 
+
+(final_value_risp_monthly - initial_value_risp_monthly)/final_value_risp_monthly * 100
+``` 
+
