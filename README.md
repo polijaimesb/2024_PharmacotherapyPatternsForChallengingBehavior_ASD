@@ -18,7 +18,7 @@ library(htmlwidgets)
 ### Authorization 
 Data used in this project is not available for public access. 
 ### How to use it
-The first Jupyter Notebook (1.CleaningAndProcessing) contains the code for all the cleaning, processing, and extraction of the study cohort necessary for the project. 
+The first Jupyter Notebook (1.ASDCohortSelection) contains the code for all the cleaning, processing, and extraction of the study cohort necessary for the project. 
 
 The second Jupyter Notebook (2.SankeyDiagram) comprises the code to identify the patterns of use of each medication over time and the visualization through a Sankey Diagram. 
 
