@@ -23,7 +23,7 @@ The first Jupyter Notebook (1.ASDCohortSelection) contains the code for all the 
 The second Jupyter Notebook (2.SankeyDiagram) comprises the code to identify the patterns of use of each medication over time and the visualization through a Sankey Diagram. 
 
 ### Publication 
-This code supports the analysis intended to be published in a research letter in the next couple of weeks.  
+This code supports the analysis intended to be published in a research letter in the next months.  
 
 
 
