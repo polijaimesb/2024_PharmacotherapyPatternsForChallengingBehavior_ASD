@@ -1,6 +1,6 @@
 
-### PharmacotherapyPatternsForChallengingBehavior_ASD
-This repository contains different markdown scripts for cleaning and processing the data and identifying the patterns of medication to treat co-occurring conditions in children with Autism Spectrum Disorder (ASD) who exhibit challenging behaviors. 
+### Patterns of psychotropic medications in individuals with ASD
+This repository contains different markdown scripts for cleaning and processing the data and identifying the patterns of medication to treat co-occurring conditions in children with Autism Spectrum Disorder (ASD). 
 
 ### Prerequisites 
 The following libraries must be installed. 
